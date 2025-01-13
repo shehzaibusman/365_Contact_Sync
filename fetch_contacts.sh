@@ -4,7 +4,7 @@ source ./conf.sh
 GRAPH_API="https://graph.microsoft.com/v1.0/users"
 
 # Output file
-OUTPUT_FILE="all_users2.csv"
+OUTPUT_FILE="all_users.csv"
 
 # Fetch Access Token
 echo "Fetching access token..."
