@@ -41,6 +41,7 @@ Review and sanitize the all_users.csv file to remove any users you don't want sy
 This push will look at values that include a phone number and an email address so add the email and phone number in entra.
 
 ## 6. Create user_list.txt
+Add the recipients who will have contacts added/updated in their exchange.
 ```bash
 user1@example.com
 user2@example.com
@@ -53,10 +54,6 @@ Run the script push2contacts.sh to push contacts to the specified users. This sc
 ./push2contacts.sh all_users.csv user_list.txt
 ```
 The contacts will be pushed to each user's Exchange contact list.
-
-
-
-
 
 
 
