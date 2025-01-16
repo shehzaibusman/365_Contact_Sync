@@ -4,7 +4,6 @@
 source ./conf.sh
 
 # Microsoft Graph API endpoints
-TOKEN_ENDPOINT="https://login.microsoftonline.com/$TENANT_ID/oauth2/v2.0/token"
 GRAPH_API="https://graph.microsoft.com/v1.0"
 
 # Get Access Token
@@ -18,25 +17,31 @@ get_access_token() {
     fi
 }
 
-# Check if contact exists
-contact_exists() {
+# Fetch all contacts for a user
+fetch_all_contacts() {
     USER_EMAIL="$1"
-    EMAIL_ADDRESS="$2"
+    NEXT_LINK="$GRAPH_API/users/$USER_EMAIL/contacts"
+    ALL_CONTACTS="[]"
 
-    echo "Checking if contact with email $EMAIL_ADDRESS already exists for user $USER_EMAIL..."
+    while [[ -n "$NEXT_LINK" ]]; do
+        RESPONSE=$(curl -s -X GET "$NEXT_LINK" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "Content-Type: application/json")
 
-    # Query the user's contacts and check if the contact with the same email exists
-    EXISTING_CONTACT=$(curl -s -X GET "$GRAPH_API/users/$USER_EMAIL/contacts" \
-        -H "Authorization: Bearer $ACCESS_TOKEN")
+        if ! echo "$RESPONSE" | jq -e '.' > /dev/null 2>&1; then
+            echo "Error: Invalid JSON response while fetching contacts for $USER_EMAIL."
+            echo "$RESPONSE"
+            exit 1
+        fi
 
-    # Check if the contact with the email exists in the response
-    if echo "$EXISTING_CONTACT" | jq -e ".value[] | select(.emailAddresses[0].address == \"$EMAIL_ADDRESS\")" > /dev/null; then
-        echo "Contact with email $EMAIL_ADDRESS already exists."
-        return 0  # Contact exists
-    else
-        echo "No contact with email $EMAIL_ADDRESS found."
-        return 1  # Contact does not exist
-    fi
+        CONTACTS=$(echo "$RESPONSE" | jq '.value // []')
+        NEXT_LINK=$(echo "$RESPONSE" | jq -r '.["@odata.nextLink"] // empty')
+
+        # Append current page contacts to the full list
+        ALL_CONTACTS=$(echo "$ALL_CONTACTS $CONTACTS" | jq -s 'add')
+    done
+
+    echo "$ALL_CONTACTS"
 }
 
 # Push contacts to a user's Contacts folder
@@ -44,11 +49,12 @@ push_contacts() {
     USER_EMAIL="$1"
     CONTACT_CSV="$2"
 
-    echo "Pushing contacts to $USER_EMAIL..."
+    echo "Fetching existing contacts for $USER_EMAIL..."
+    ALL_CONTACTS=$(fetch_all_contacts "$USER_EMAIL")
 
-    # Read the CSV file and process each contact
+    echo "Pushing contacts to $USER_EMAIL..."
     tail -n +2 "$CONTACT_CSV" | while IFS=',' read -r GivenName Surname EmailAddress BusinessPhone MobilePhone JobTitle; do
-        # Remove surrounding quotes, if any, and trim whitespace
+        # Remove surrounding quotes and trim whitespace
         GivenName=$(echo "$GivenName" | sed 's/^"//;s/"$//' | awk '{$1=$1};1')
         Surname=$(echo "$Surname" | sed 's/^"//;s/"$//' | awk '{$1=$1};1')
         EmailAddress=$(echo "$EmailAddress" | sed 's/^"//;s/"$//' | awk '{$1=$1};1')
@@ -62,12 +68,13 @@ push_contacts() {
             continue
         fi
 
-        # Check if contact already exists before adding
-        if contact_exists "$USER_EMAIL" "$EmailAddress"; then
-            continue  # Skip if contact already exists
+        # Check if contact already exists in the fetched list
+        if echo "$ALL_CONTACTS" | jq -e --arg email "$EmailAddress" '.[] | select(.emailAddresses[]?.address == $email)' > /dev/null; then
+            echo "Contact with email $EmailAddress already exists for $USER_EMAIL."
+            continue
         fi
 
-        # Create the contact payload, including only non-empty fields
+        # Create the contact payload
         CONTACT_JSON=$(jq -n \
             --arg fn "$GivenName" \
             --arg ln "$Surname" \
@@ -93,7 +100,7 @@ push_contacts() {
 
         # Check for errors
         if echo "$RESPONSE" | jq -e '.error' > /dev/null; then
-            echo "Failed to add contact $EmailAddress for $USER_EMAIL: $(echo "$RESPONSE" | jq '.error.message')"
+            echo "Failed to add contact $EmailAddress for $USER_EMAIL: $(echo "$RESPONSE" | jq -r '.error.message')"
         else
             echo "Successfully added contact $EmailAddress for $USER_EMAIL."
         fi
@@ -114,7 +121,7 @@ main() {
     # Get access token
     get_access_token
 
-    # Push contacts for each user in the list
+    # Process each user in the list
     while IFS= read -r USER_EMAIL; do
         push_contacts "$USER_EMAIL" "$CONTACT_CSV"
     done < "$USER_LIST"
