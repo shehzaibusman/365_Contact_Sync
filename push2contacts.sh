@@ -127,6 +127,7 @@ main() {
     done < "$USER_LIST"
 
     echo "Contacts have been pushed to all specified users."
+    echo "Log File: push_contacts.log"
 }
 
 # Execute main function
